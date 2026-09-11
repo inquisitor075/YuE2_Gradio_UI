@@ -28,7 +28,7 @@ def read_abc(artifact_dir):
 
 def generate_song(pipe, style, lyrics, cot, seed, cfg_scale):
     if not style.strip() or not lyrics.strip():
-        return None, "Error: style and lyrics must not be empty.", "", "", "", "", "", ""
+        return None, "Error: style and lyrics must not be empty.", "", "", "", "", ""
 
     try:
         seed = int(seed)
@@ -46,15 +46,15 @@ def generate_song(pipe, style, lyrics, cot, seed, cfg_scale):
         info = f"CoT: {cot}\nSeed: {seed}\nCFG: {cfg_scale}\nArtifacts: {os.path.abspath(artifact_dir)}"
         status = f"Done! Audio + ABC saved to {artifact_dir}"
 
-        return audio_path, status, abc_text, lyrics, style, info, artifact_dir, abc_text
+        return audio_path, status, abc_text, lyrics, style, info, artifact_dir
     except Exception as e:
-        return None, f"Generation error: {e}", "", "", "", "", "", ""
+        return None, f"Generation error: {e}", "", "", "", "", ""
 
 
 def build_interface(pipe):
     with gr.Blocks(title="YuE2 Music Generator") as demo:
         gr.Markdown("# YuE2 Music Generator")
-        gr.Markdown("Generate complete songs with vocals + see the symbolic ABC score. Powered by [YuE2](https://huggingface.co/m-a-p/YuE2-3B).")
+        gr.Markdown("Turn lyrics and a style prompt into a complete song with vocals + see the symbolic ABC score. Powered by [YuE2](https://huggingface.co/m-a-p/YuE2-3B).")
 
         with gr.Row():
             with gr.Column(scale=1):
@@ -70,17 +70,16 @@ def build_interface(pipe):
 
         with gr.Row():
             with gr.Column(scale=2):
-                audio = gr.Audio(label="Generated song", type="filepath", show_download_button=True)
+                audio = gr.Audio(label="Generated song", type="filepath")
                 status = gr.Textbox(label="Status", interactive=False)
             with gr.Column(scale=3):
                 with gr.Tabs():
                     with gr.TabItem("ABC Score"):
-                        abc_out = gr.Textbox(label="Symbolic score (ABC notation)", lines=25, interactive=False, show_copy_button=True)
-                        abc_download = gr.File(label="Download ABC", visible=False)
+                        abc_out = gr.Textbox(label="Symbolic score (ABC notation)", lines=25, interactive=False)
                     with gr.TabItem("Lyrics"):
-                        lyrics_out = gr.Textbox(label="Input lyrics", lines=25, interactive=False, show_copy_button=True)
+                        lyrics_out = gr.Textbox(label="Input lyrics", lines=25, interactive=False)
                     with gr.TabItem("Style"):
-                        style_out = gr.Textbox(label="Input style", lines=10, interactive=False, show_copy_button=True)
+                        style_out = gr.Textbox(label="Input style", lines=10, interactive=False)
                     with gr.TabItem("Info"):
                         info_out = gr.Textbox(label="Generation info", lines=10, interactive=False)
                         artifacts_out = gr.Textbox(label="Artifacts folder", lines=2, interactive=False)
@@ -88,7 +87,7 @@ def build_interface(pipe):
         generate_btn.click(
             generate_song,
             inputs=[style, lyrics, cot, seed, cfg_scale],
-            outputs=[audio, status, abc_out, lyrics_out, style_out, info_out, artifacts_out, abc_download],
+            outputs=[audio, status, abc_out, lyrics_out, style_out, info_out, artifacts_out],
         )
 
     return demo
