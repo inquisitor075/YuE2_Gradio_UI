@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""YuE2 Streamlit UI — dropdowns for language, CoT mode, key."""
+"""YuE2 Streamlit UI — live generation status."""
 
 import os
+import sys
 import time
+import queue
+import threading
 import streamlit as st
 from pathlib import Path
 from yue2 import YuE2Pipeline
@@ -23,6 +26,29 @@ def read_abc(artifact_dir):
     for p in Path(artifact_dir).rglob("*.abc"):
         return p.read_text(encoding="utf-8")
     return "No ABC score found."
+
+class QueueStream:
+    def __init__(self, log_queue):
+        self.log_queue = log_queue
+    def write(self, msg):
+        if msg.strip():
+            self.log_queue.put(msg)
+    def flush(self):
+        pass
+
+def generate_in_thread(result_queue, log_queue, pipe, style, lyrics, cot, seed, cfg_scale, abc_score):
+    old_stdout = sys.stdout
+    sys.stdout = QueueStream(log_queue)
+    try:
+        if abc_score.strip():
+            song = pipe(style=style, lyrics=lyrics, abc=abc_score, cot=cot, seed=seed, cfg_scale=cfg_scale)
+        else:
+            song = pipe(style=style, lyrics=lyrics, cot=cot, seed=seed, cfg_scale=cfg_scale)
+        result_queue.put(("success", song))
+    except Exception as e:
+        result_queue.put(("error", str(e)))
+    finally:
+        sys.stdout = old_stdout
 
 pipe = load_pipeline()
 
@@ -77,27 +103,74 @@ with col2:
         if not style.strip() or not lyrics.strip():
             st.error("Style and lyrics must not be empty.")
         else:
-            with st.spinner("Generating song... This may take 1–3 minutes"):
-                try:
-                    seed_val = int(seed)
-                    cfg_val = float(cfg_scale)
+            try:
+                seed_val = int(seed)
+                cfg_val = float(cfg_scale)
+                
+                enhanced_style = style.strip()
+                enhanced_style += f", {language} language"
+                if bpm.strip():
+                    enhanced_style += f", {bpm.strip()} bpm"
+                enhanced_style += f", key of {key}"
+                if duration.strip():
+                    enhanced_style += f", duration {duration.strip()}"
+                
+                result_queue = queue.Queue()
+                log_queue = queue.Queue()
+                
+                thread = threading.Thread(
+                    target=generate_in_thread,
+                    args=(result_queue, log_queue, pipe, enhanced_style, lyrics, cot, seed_val, cfg_val, abc_score)
+                )
+                thread.start()
+                
+                status_container = st.status("🎵 Starting generation...", expanded=True)
+                progress_bar = st.progress(0)
+                log_text = st.empty()
+                
+                start_time = time.time()
+                current_progress = 0
+                last_log = ""
+                
+                while thread.is_alive():
+                    try:
+                        while True:
+                            msg = log_queue.get_nowait()
+                            last_log += msg
+                            if "Planning" in msg:
+                                status_container.update(label="🎼 Planning score...")
+                                current_progress = max(current_progress, 15)
+                            elif "Generating" in msg:
+                                status_container.update(label="🎵 Generating song tokens...")
+                                current_progress = max(current_progress, 40)
+                            elif "Synthesizing" in msg:
+                                status_container.update(label="🔊 Synthesizing audio...")
+                                current_progress = max(current_progress, 70)
+                            elif "Decoding" in msg or "VAE" in msg:
+                                status_container.update(label="🎧 Decoding waveform...")
+                                current_progress = max(current_progress, 90)
+                    except queue.Empty:
+                        pass
                     
-                    enhanced_style = style.strip()
-                    enhanced_style += f", {language} language"
-                    if bpm.strip():
-                        enhanced_style += f", {bpm.strip()} bpm"
-                    enhanced_style += f", key of {key}"
-                    if duration.strip():
-                        enhanced_style += f", duration {duration.strip()}"
+                    elapsed = time.time() - start_time
+                    fallback_progress = min(95, int(elapsed / 150 * 100))
+                    progress_bar.progress(max(current_progress, fallback_progress))
+                    time.sleep(0.3)
+                
+                thread.join()
+                result = result_queue.get()
+                
+                if result[0] == "error":
+                    status_container.update(label="❌ Generation failed", state="error")
+                    st.error(f"Generation error: {result[1]}")
+                else:
+                    status_container.update(label="✅ Done!", state="complete")
+                    progress_bar.progress(100)
                     
+                    song = result[1]
                     timestamp = int(time.time())
                     artifact_dir = os.path.join(OUTPUT_DIR, f"song_{timestamp}_seed{seed_val}")
                     os.makedirs(artifact_dir, exist_ok=True)
-                    
-                    if abc_score.strip():
-                        song = pipe(style=enhanced_style, lyrics=lyrics, abc=abc_score, cot=cot, seed=seed_val, cfg_scale=cfg_val)
-                    else:
-                        song = pipe(style=enhanced_style, lyrics=lyrics, cot=cot, seed=seed_val, cfg_scale=cfg_val)
                     
                     audio_path = os.path.join(artifact_dir, "song.flac")
                     song.save(audio_path)
@@ -105,7 +178,7 @@ with col2:
                     
                     abc_text = read_abc(artifact_dir)
                     
-                    st.success(f"Done! Saved to {artifact_dir}")
+                    st.success(f"Saved to {artifact_dir}")
                     st.audio(audio_path, format="audio/flac")
                     
                     with open(audio_path, "rb") as f:
@@ -115,8 +188,10 @@ with col2:
                         st.text_area("Generated ABC", abc_text, height=300)
                     with st.expander("Generation Info"):
                         st.text(f"CoT: {cot}\nSeed: {seed_val}\nCFG: {cfg_val}\nEnhanced style: {enhanced_style}\nArtifacts: {artifact_dir}")
-                
-                except Exception as e:
-                    st.error(f"Generation error: {e}")
+                    with st.expander("Raw logs"):
+                        st.code(last_log)
+            
+            except Exception as e:
+                st.error(f"Setup error: {e}")
     else:
         st.info("Fill in the inputs and click Generate.")
