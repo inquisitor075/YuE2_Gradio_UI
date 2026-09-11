@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Output files
+*.flac
+*.wav
+*.mp3
+outputs/
+
+# Misc
+.DS_Store
